@@ -6,13 +6,31 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ─── FIREBASE ADMIN ──────────────────────────────────────────────
-const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount),
-});
+// ─── FIREBASE ADMIN (lazy init) ──────────────────────────────────
+let db = null;
 
-const db = admin.firestore();
+function getDb() {
+  if (db) return db;
+
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (!raw) {
+    throw new Error("FIREBASE_SERVICE_ACCOUNT env var not set");
+  }
+
+  let serviceAccount;
+  try {
+    serviceAccount = JSON.parse(raw);
+  } catch (e) {
+    throw new Error("FIREBASE_SERVICE_ACCOUNT is not valid JSON: " + e.message);
+  }
+
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount),
+  });
+
+  db = admin.firestore();
+  return db;
+}
 
 // ─── HEALTH CHECK ────────────────────────────────────────────────
 app.get("/", (req, res) => {
@@ -36,8 +54,11 @@ app.post("/send-alert", async (req, res) => {
       });
     }
 
-    // 3. Buscar FCM token del sponsor
-    const sponsorDoc = await db.collection("users").doc(sponsorUid).get();
+    // 3. Conectar a Firestore
+    const firestore = getDb();
+
+    // 4. Buscar FCM token del sponsor
+    const sponsorDoc = await firestore.collection("users").doc(sponsorUid).get();
     if (!sponsorDoc.exists) {
       return res.status(404).json({ error: "Sponsor no encontrado" });
     }
@@ -47,7 +68,7 @@ app.post("/send-alert", async (req, res) => {
       return res.status(404).json({ error: "Sponsor sin FCM token" });
     }
 
-    // 4. Enviar notificación Push via FCM v1
+    // 5. Enviar notificación Push via FCM v1
     const message = {
       token: fcmToken,
       notification: {
